@@ -923,3 +923,924 @@ LoadEnv(...)
 ```
 
 Most business logic around a struct should be implemented as methods.
+
+# Maps and `make()`
+
+## Why `make()` Exists
+
+Some Go types need memory allocation before use.
+
+Example:
+
+```go
+var index map[string]int64
+```
+
+This only declares the map.
+
+It is:
+
+```text
+nil
+```
+
+Trying to write:
+
+```go
+index["test"] = 100
+```
+
+causes:
+
+```text
+panic: assignment to entry in nil map
+```
+
+---
+
+## Allocating the Map
+
+```go
+index := make(map[string]int64)
+```
+
+Now memory is allocated and the map can be used.
+
+```go
+index["test"] = 100
+```
+
+works.
+
+---
+
+## Why Not Just Use `var`?
+
+```go
+var index map[string]int64
+```
+
+creates:
+
+```text
+Declaration only
+```
+
+No backing storage exists.
+
+```go
+index = make(map[string]int64)
+```
+
+creates the backing storage.
+
+---
+
+## Types That Need `make()`
+
+### Maps
+
+```go
+make(map[string]int64)
+```
+
+### Slices
+
+```go
+make([]string, 0)
+```
+
+### Channels
+
+```go
+make(chan int)
+```
+
+---
+
+## Rule of Thumb
+
+```text
+Structs:
+    var s Struct
+
+Maps:
+    make(map[K]V)
+
+Slices:
+    make([]T, size)
+
+Channels:
+    make(chan T)
+```
+
+---
+
+# Command Line Arguments
+
+## Accessing Arguments
+
+Go provides:
+
+```go
+os.Args
+```
+
+Type:
+
+```go
+[]string
+```
+
+Example:
+
+```bash
+./learn_db set name namah
+```
+
+Produces:
+
+```text
+[
+    "./learn_db",
+    "set",
+    "name",
+    "namah",
+]
+```
+
+---
+
+## Common Pattern
+
+```go
+if len(os.Args) < 2 {
+    return
+}
+
+command := os.Args[1]
+```
+
+---
+
+## Slicing Arguments
+
+To skip executable and command:
+
+```go
+args := os.Args[2:]
+```
+
+Example:
+
+```text
+[
+    "./learn_db",
+    "set",
+    "name",
+    "namah",
+]
+```
+
+becomes:
+
+```text
+[
+    "name",
+    "namah",
+]
+```
+
+---
+
+# Slices
+
+## Creating a Slice
+
+```go
+names := []string{
+    "john",
+    "jane",
+    "bob",
+}
+```
+
+---
+
+## Slice Syntax
+
+```go
+arr[start:end]
+```
+
+Examples:
+
+```go
+arr := []string{
+    "a",
+    "b",
+    "c",
+    "d",
+}
+```
+
+```go
+arr[1:]
+```
+
+Result:
+
+```text
+[b c d]
+```
+
+```go
+arr[:2]
+```
+
+Result:
+
+```text
+[a b]
+```
+
+```go
+arr[1:3]
+```
+
+Result:
+
+```text
+[b c]
+```
+
+---
+
+## Mental Model
+
+```text
+[start, end)
+```
+
+Start inclusive.
+
+End exclusive.
+
+---
+
+# Methods as Values
+
+## Methods Can Be Stored
+
+Given:
+
+```go
+func (db *DataBase) GetKey(
+    key string,
+) (string, error)
+```
+
+Then:
+
+```go
+handler := db.GetKey
+```
+
+has type:
+
+```go
+func(
+    string,
+) (string, error)
+```
+
+Notice:
+
+```text
+db is already attached.
+```
+
+---
+
+## Method Values
+
+```go
+db.GetKey
+```
+
+Produces:
+
+```go
+func(string) (string, error)
+```
+
+Receiver already bound.
+
+---
+
+## Method Expressions
+
+```go
+(*DataBase).GetKey
+```
+
+Produces:
+
+```go
+func(
+    *DataBase,
+    string,
+) (string, error)
+```
+
+Receiver not bound.
+
+---
+
+## Mental Model
+
+```text
+db.GetKey
+    =
+receiver attached
+
+(*DataBase).GetKey
+    =
+receiver must be passed manually
+```
+
+---
+
+# Interfaces
+
+## What Is An Interface?
+
+An interface describes behavior.
+
+Example:
+
+```go
+type Engine interface {
+    SetKey(
+        key string,
+        value string,
+    ) error
+
+    GetKey(
+        key string,
+    ) (string, error)
+}
+```
+
+---
+
+## Implicit Implementation
+
+Unlike Java:
+
+```java
+class DB implements Engine
+```
+
+Go does not require:
+
+```go
+implements Engine
+```
+
+anywhere.
+
+---
+
+Given:
+
+```go
+type DataBase struct {
+    filePath string
+}
+```
+
+and:
+
+```go
+func (db *DataBase) SetKey(...) error
+func (db *DataBase) GetKey(...) (string, error)
+```
+
+Go automatically determines:
+
+```text
+*DataBase satisfies Engine
+```
+
+because all required methods exist.
+
+---
+
+## Why Use Interfaces?
+
+Without interfaces:
+
+```go
+func RunCommand(
+    db *logengine.DataBase,
+)
+```
+
+Only works with:
+
+```text
+logengine.DataBase
+```
+
+---
+
+With interfaces:
+
+```go
+func RunCommand(
+    db engine.Engine,
+)
+```
+
+Works with:
+
+```text
+Log Engine
+BTree Engine
+LSM Engine
+```
+
+as long as they implement:
+
+```go
+SetKey(...)
+GetKey(...)
+```
+
+---
+
+## Interfaces Describe Capabilities
+
+Struct:
+
+```text
+What data exists?
+```
+
+Interface:
+
+```text
+What actions are available?
+```
+
+---
+
+## Important: Do Not Use Pointers To Interfaces
+
+Bad:
+
+```go
+*engine.Engine
+```
+
+Good:
+
+```go
+engine.Engine
+```
+
+Interfaces already contain a reference to the concrete value.
+
+---
+
+## Rule of Thumb
+
+```text
+Struct:
+    Usually use *Struct
+
+Interface:
+    Usually use Interface
+```
+
+---
+
+# Scanners and Iteration
+
+## Reading Line By Line
+
+```go
+scanner := bufio.NewScanner(file)
+```
+
+---
+
+## Iterating
+
+```go
+for scanner.Scan() {
+    line := scanner.Text()
+
+    fmt.Println(line)
+}
+```
+
+---
+
+## What Does Scan() Return?
+
+```go
+scanner.Scan()
+```
+
+returns:
+
+```go
+bool
+```
+
+Meaning:
+
+```text
+true  -> another line exists
+
+false -> EOF or error
+```
+
+---
+
+## Where Is The Current Value?
+
+The current line is stored internally inside the scanner.
+
+Retrieve it using:
+
+```go
+scanner.Text()
+```
+
+Example:
+
+```go
+for scanner.Scan() {
+    line := scanner.Text()
+
+    fmt.Println(line)
+}
+```
+
+---
+
+## Mental Model
+
+Python:
+
+```python
+for line in file:
+```
+
+Go:
+
+```go
+for scanner.Scan() {
+    line := scanner.Text()
+}
+```
+
+---
+
+# Package Visibility (Exported vs Unexported)
+
+## Exported Names
+
+Names starting with uppercase letters are exported.
+
+Example:
+
+```go
+func SetKey(...)
+```
+
+Accessible from other packages.
+
+---
+
+## Unexported Names
+
+Names starting with lowercase letters are private.
+
+Example:
+
+```go
+func setKey(...)
+```
+
+Only accessible inside the package.
+
+---
+
+Examples:
+
+```go
+type DataBase struct {}
+```
+
+Exported.
+
+```go
+type dataBase struct {}
+```
+
+Private.
+
+---
+
+```go
+func CreateDatabase(...)
+```
+
+Exported.
+
+---
+
+```go
+func createDatabase(...)
+```
+
+Private.
+
+---
+
+## Rule of Thumb
+
+```text
+Uppercase:
+    Public
+
+Lowercase:
+    Private
+```
+
+## Why We Usually Do Not Use Pointers To Interfaces
+
+When learning Go, it is natural to think:
+
+```go
+func RunCommand(
+	db *engine.Engine,
+)
+```
+
+because we have learned that structs are usually passed as pointers.
+
+However, interfaces are different.
+
+---
+
+### Structs Need Pointers
+
+Given:
+
+```go
+type DataBase struct {
+	filePath string
+}
+```
+
+Passing:
+
+```go
+func DoSomething(
+	db DataBase,
+)
+```
+
+creates a copy of the struct.
+
+To avoid copying and to modify the original object, we use:
+
+```go
+func DoSomething(
+	db *DataBase,
+)
+```
+
+---
+
+### Interfaces Already Hold A Reference
+
+Given:
+
+```go
+type Engine interface {
+	SetKey(...)
+	GetKey(...)
+}
+```
+
+and:
+
+```go
+db := CreateDatabase(...)
+```
+
+we can write:
+
+```go
+func RunCommand(
+	db engine.Engine,
+)
+```
+
+Even though we are not using a pointer.
+
+Why?
+
+Because an interface internally contains:
+
+```text
+1. The concrete type
+2. A reference to the concrete value
+```
+
+Conceptually:
+
+```text
+Engine
+┌─────────────────────────┐
+│ Type: *DataBase         │
+│ Value: 0x12345678       │
+└─────────────────────────┘
+```
+
+The interface already knows:
+
+- What type it contains.
+- Where the actual object lives in memory.
+
+---
+
+### Think Of An Interface As A Box
+
+Suppose:
+
+```go
+var db engine.Engine
+```
+
+After assignment:
+
+```go
+db = CreateDatabase(...)
+```
+
+Conceptually:
+
+```text
+db
+│
+▼
+
+┌─────────────────────────┐
+│ Type: *DataBase         │
+│ Value: 0x12345678       │
+└─────────────────────────┘
+```
+
+The interface is already a box containing a pointer to the real object.
+
+---
+
+### What Happens With A Pointer To An Interface?
+
+Suppose we write:
+
+```go
+*engine.Engine
+```
+
+Now we have:
+
+```text
+Pointer
+│
+▼
+
+Interface Box
+│
+▼
+
+Pointer To DataBase
+│
+▼
+
+Actual DataBase
+```
+
+Visualized:
+
+```text
+*Engine
+    │
+    ▼
+ Engine
+    │
+    ▼
+ *DataBase
+    │
+    ▼
+ DataBase
+```
+
+This extra level of indirection is almost never useful.
+
+---
+
+### Why This Causes Errors
+
+Suppose:
+
+```go
+func RunCommand(
+	db *engine.Engine,
+)
+```
+
+and later:
+
+```go
+db.SetKey(...)
+```
+
+Go reports:
+
+```text
+db.SetKey undefined
+(type *engine.Engine is pointer to interface)
+```
+
+because:
+
+```text
+The methods belong to the interface,
+not to a pointer to the interface.
+```
+
+---
+
+### Correct Usage
+
+Bad:
+
+```go
+func RunCommand(
+	db *engine.Engine,
+)
+```
+
+Good:
+
+```go
+func RunCommand(
+	db engine.Engine,
+)
+```
+
+---
+
+### Rule Of Thumb
+
+```text
+Struct:
+    Usually use *Struct
+
+Interface:
+    Usually use Interface
+```
+
+If you ever see:
+
+```go
+*SomeInterface
+```
+
+it is often a sign that the design should be reconsidered.
+
+---
+
+### Mental Model
+
+Struct:
+
+```text
+Need pointer?
+Usually yes.
+```
+
+Interface:
+
+```text
+Already contains a reference.
+No additional pointer needed.
+```

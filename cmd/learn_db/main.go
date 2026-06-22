@@ -2,17 +2,18 @@ package main
 
 import (
 	"fmt"
+	"learn_db/internal/engine"
 	"learn_db/internal/engine/logengine"
 	"os"
 )
 
 type CommandHanlder func(
-	db *logengine.DataBase,
+	db engine.Engine,
 	args []string,
 ) (string, error)
 
 func SetCommand(
-	db *logengine.DataBase,
+	db engine.Engine,
 	args []string,
 ) (string, error) {
 	/*
@@ -35,7 +36,7 @@ func SetCommand(
 }
 
 func GetCommand(
-	db *logengine.DataBase,
+	db engine.Engine,
 	args []string,
 ) (string, error) {
 	/*
@@ -48,7 +49,7 @@ func GetCommand(
 	return db.GetKey(args[0])
 }
 
-func RunCommand(db *logengine.DataBase) (string, error) {
+func RunCommand(db engine.Engine) (string, error) {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
 		fmt.Println("./learn_db set <key> <value>")
