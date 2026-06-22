@@ -1,4 +1,4 @@
-package main
+package logengine
 
 import (
 	"bufio"
@@ -89,74 +89,4 @@ func (db *DataBase) GetKey(key string) (string, error) {
 		}
 	}
 	return value, nil
-}
-
-type CommandHanlder func(
-	args []string,
-) (string, error)
-
-func (db *DataBase) SetCommand(
-	args []string,
-) (string, error) {
-	/*
-		Wrapper around the setkey function to match the function signature.
-	*/
-	if len(args) != 2 {
-		return "", fmt.Errorf("usage: set <key> <value>")
-	}
-
-	err := db.SetKey(
-		args[0],
-		args[1],
-	)
-
-	if err != nil {
-		return "", err
-	}
-
-	return "OK", nil
-}
-
-func (db *DataBase) GetCommand(
-	args []string,
-) (string, error) {
-	/*
-		Wrapper around the getkey function to match the function signature.
-	*/
-	if len(args) != 1 {
-		return "", fmt.Errorf("usage: get <key>")
-	}
-
-	return db.GetKey(args[0])
-}
-
-func RunCommand(db *DataBase) (string, error) {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage:")
-		fmt.Println("./learn_db set <key> <value>")
-		fmt.Println("./learn_db get <key>")
-	}
-
-	command := os.Args[1]
-
-	handlers := map[string]CommandHanlder{
-		"set": db.SetCommand,
-		"get": db.GetCommand,
-	}
-
-	handler, exists := handlers[command]
-	if !exists {
-		return "", fmt.Errorf("Unknown Command %s", command)
-	}
-
-	return handler(os.Args[2:])
-}
-
-func main() {
-	db := CreateDatabase("db.log")
-	result, err := RunCommand(db)
-	if err != nil {
-		fmt.Printf("Failure\n: %v", err)
-	}
-	fmt.Printf("Result: %v", result)
 }
