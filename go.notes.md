@@ -1844,3 +1844,1096 @@ Interface:
 Already contains a reference.
 No additional pointer needed.
 ```
+
+# Database Engine Evolution Notes
+
+## Why BuildIndex Exists
+
+When the database starts:
+
+```go
+db := NewDatabase(...)
+db.BuildIndex()
+```
+
+We scan the entire log once and reconstruct:
+
+```go
+map[string]int64
+```
+
+Example:
+
+```text
+db.log
+
+test,value1
+user,hello
+test,value2
+```
+
+Index becomes:
+
+```go
+{
+    "test": 22,
+    "user": 12,
+}
+```
+
+The latest occurrence wins.
+
+After startup:
+
+```go
+SetKey()
+```
+
+maintains the index in memory.
+
+No more rebuilding.
+
+---
+
+## What is an Offset?
+
+An offset is:
+
+> Number of bytes from the beginning of the file.
+
+Example:
+
+```text
+0         10        20
+|---------|---------|
+
+test,value1
+user,hello
+```
+
+If:
+
+```text
+user,hello
+```
+
+starts at byte 12:
+
+```go
+index["user"] = 12
+```
+
+---
+
+## How Reads Work
+
+Instead of:
+
+```go
+Scan entire file
+```
+
+we do:
+
+```go
+offset := index["user"]
+
+file.Seek(offset, io.SeekStart)
+
+Read one record
+```
+
+Read complexity becomes:
+
+```text
+O(1)
+```
+
+instead of:
+
+```text
+O(n)
+```
+
+---
+
+# os.Open vs os.OpenFile
+
+## os.Open
+
+```go
+os.Open("db.log")
+```
+
+Equivalent to:
+
+```go
+os.OpenFile(
+    "db.log",
+    os.O_RDONLY,
+    0,
+)
+```
+
+Read only.
+
+---
+
+## os.OpenFile
+
+Allows:
+
+```go
+O_RDONLY
+O_WRONLY
+O_RDWR
+O_CREATE
+O_APPEND
+O_TRUNC
+```
+
+Example:
+
+```go
+os.OpenFile(
+    "db.log",
+    os.O_RDWR|os.O_CREATE,
+    0644,
+)
+```
+
+---
+
+# What Does Seek Do?
+
+Files have a cursor.
+
+```text
+cursor
+  ↓
+test,value1
+user,hello
+```
+
+Move cursor:
+
+```go
+file.Seek(0, io.SeekStart)
+```
+
+Move to beginning.
+
+---
+
+```go
+file.Seek(0, io.SeekEnd)
+```
+
+Move to EOF.
+
+Used for appends.
+
+---
+
+```go
+file.Seek(0, io.SeekCurrent)
+```
+
+Move 0 bytes relative to current position.
+
+Effectively:
+
+> Tell me where I am.
+
+---
+
+# Why Seek(0, io.SeekCurrent) Looked Attractive
+
+We thought:
+
+```go
+offset, _ := file.Seek(0, io.SeekCurrent)
+```
+
+would give:
+
+```text
+Current record offset
+```
+
+before reading each line.
+
+Unfortunately:
+
+```go
+bufio.Reader
+```
+
+breaks this assumption.
+
+---
+
+# The Buffered Reader Bug
+
+Suppose:
+
+```go
+reader := bufio.NewReader(file)
+```
+
+Reader may immediately fetch:
+
+```text
+8192 bytes
+```
+
+from the OS.
+
+The OS cursor jumps:
+
+```text
+0 -> 8192
+```
+
+even though you've only processed:
+
+```text
+test,value1
+```
+
+from memory.
+
+Now:
+
+```go
+file.Seek(0, io.SeekCurrent)
+```
+
+returns:
+
+```text
+8192
+```
+
+instead of:
+
+```text
+12
+```
+
+or wherever you really are.
+
+---
+
+# Two Different Cursors Exist
+
+## OS Cursor
+
+Represents:
+
+```text
+Position in file descriptor
+```
+
+Example:
+
+```text
+8192
+```
+
+---
+
+## Buffer Cursor
+
+Represents:
+
+```text
+Position inside buffered memory
+```
+
+Example:
+
+```text
+12
+```
+
+These are not always the same.
+
+This was the key insight.
+
+---
+
+# The One-Line Explanation
+
+> The OS cursor tracks bytes read from the file descriptor, while bufio tracks bytes consumed from its in-memory buffer.
+
+Example:
+
+```text
+Bytes read from OS      = 8192
+Bytes consumed by you   = 12
+```
+
+Therefore:
+
+```text
+OS Cursor      = 8192
+Logical Cursor = 12
+```
+
+They diverge.
+
+---
+
+# Why Does bufio Read Ahead?
+
+Because syscalls are expensive.
+
+Without buffering:
+
+```go
+Read 1 byte
+Read 1 byte
+Read 1 byte
+...
+```
+
+Potentially millions of syscalls.
+
+---
+
+With buffering:
+
+```text
+Read 8KB once
+```
+
+Then consume data directly from RAM.
+
+Far fewer syscalls.
+
+Much faster.
+
+---
+
+# Grocery Store Analogy
+
+Without buffering:
+
+```text
+Need tomato
+→ Drive to store
+
+Need onion
+→ Drive to store
+
+Need milk
+→ Drive to store
+```
+
+Many trips.
+
+---
+
+With buffering:
+
+```text
+Need tomato
+```
+
+Buffer says:
+
+```text
+While I'm there,
+I'll grab tomatoes,
+onions,
+milk,
+bread,
+eggs.
+```
+
+Now future requests come from the fridge.
+
+No extra trips.
+
+---
+
+# What Happens When File Is Larger Than 8KB?
+
+Suppose:
+
+```text
+100 MB file
+```
+
+Buffer loads:
+
+```text
+First 8KB
+```
+
+Consume data.
+
+When buffer becomes empty:
+
+```text
+Load next 8KB
+```
+
+Repeat until EOF.
+
+This is called streaming.
+
+We never load the entire file into memory.
+
+---
+
+# Why We Track Offsets Ourselves
+
+Instead of:
+
+```go
+file.Seek(0, io.SeekCurrent)
+```
+
+we do:
+
+```go
+offset += bytesRead
+```
+
+Example:
+
+```go
+offset := int64(0)
+
+for scanner.Scan() {
+    index[key] = offset
+
+    offset += int64(len(scanner.Bytes()) + 1)
+}
+```
+
+Now:
+
+```text
+offset
+```
+
+represents our logical position in the file.
+
+Independent of buffering.
+
+---
+
+# Why This Works
+
+An offset is ultimately:
+
+> Number of bytes from the beginning of the file.
+
+Whether we obtain it from:
+
+```go
+file.Seek(...)
+```
+
+or:
+
+```go
+offset += bytesRead
+```
+
+doesn't matter.
+
+The number is the same.
+
+---
+
+# Runtime Writes
+
+For writes we use the filesystem offset:
+
+```go
+offset, _ := file.Seek(0, io.SeekEnd)
+
+file.WriteString(record)
+
+index[key] = offset
+```
+
+This gives the true starting position of the new record.
+
+---
+
+# Storage Engine Lesson
+
+A recurring pattern in databases:
+
+> Don't repeatedly ask the OS where you are. Track your own logical state.
+
+Examples:
+
+- Database page positions
+- Kafka offsets
+- Log sequence numbers
+- Memory allocators
+- Storage engine indexes
+
+The database often already knows where it is.
+
+---
+
+# Current Architecture
+
+## Disk
+
+```text
+Append-only log
+```
+
+## Memory
+
+```go
+map[string]int64
+```
+
+## Write Path
+
+```text
+Append record
+Update index
+```
+
+Equivalent to:
+
+```go
+offset, _ := file.Seek(0, io.SeekEnd)
+
+file.WriteString(record)
+
+index[key] = offset
+```
+
+Complexity:
+
+```text
+O(1)
+```
+
+---
+
+## Read Path
+
+```text
+Lookup offset
+Seek
+Read one record
+```
+
+Equivalent to:
+
+```go
+offset := index[key]
+
+file.Seek(offset, io.SeekStart)
+
+Read record
+```
+
+Complexity:
+
+```text
+O(1)
+```
+
+---
+
+# Final Insight
+
+The moment this project stopped being "write a file" and became:
+
+- file descriptors
+- offsets
+- buffering
+- syscalls
+- logical vs physical position
+- append-only logs
+- indexing
+
+...it became a storage engine.
+
+And the concepts learned here reappear everywhere:
+
+- Kafka partitions
+- PostgreSQL WAL
+- Cassandra SSTables
+- RocksDB
+- Redis AOF
+- Filesystems
+- Distributed logs
+
+Different systems.
+
+Same ideas.
+
+
+# Bytes vs Characters vs Runes
+
+## The Question
+
+Does:
+
+```go
+len(scanner.Bytes())
+```
+
+mean:
+
+> "How many characters did I read?"
+
+Not necessarily.
+
+It means:
+
+> "How many bytes did I read?"
+
+These are not always the same thing.
+
+---
+
+# ASCII Characters
+
+For simple ASCII text:
+
+```text
+hello
+```
+
+each character occupies:
+
+```text
+1 byte
+```
+
+Example:
+
+```go
+fmt.Println(len("hello"))
+```
+
+Output:
+
+```text
+5
+```
+
+Because:
+
+```text
+h = 1 byte
+e = 1 byte
+l = 1 byte
+l = 1 byte
+o = 1 byte
+
+Total = 5 bytes
+```
+
+In ASCII:
+
+```text
+1 character = 1 byte
+```
+
+which makes it easy to forget they're different concepts.
+
+---
+
+# Unicode Changes Everything
+
+Not all characters are ASCII.
+
+Example:
+
+```text
+é
+```
+
+```go
+fmt.Println(len("é"))
+```
+
+Output:
+
+```text
+2
+```
+
+because UTF-8 stores:
+
+```text
+é = 2 bytes
+```
+
+---
+
+Example:
+
+```text
+न
+```
+
+```go
+fmt.Println(len("न"))
+```
+
+Output:
+
+```text
+3
+```
+
+because:
+
+```text
+न = 3 bytes
+```
+
+---
+
+Example:
+
+```text
+🚀
+```
+
+```go
+fmt.Println(len("🚀"))
+```
+
+Output:
+
+```text
+4
+```
+
+because:
+
+```text
+🚀 = 4 bytes
+```
+
+---
+
+# UTF-8 Encoding
+
+Go strings use UTF-8.
+
+Different characters occupy different numbers of bytes.
+
+| Character | Bytes |
+|------------|---------|
+| a | 1 |
+| z | 1 |
+| 1 | 1 |
+| , | 1 |
+| é | 2 |
+| न | 3 |
+| 🚀 | 4 |
+
+---
+
+# len() Measures Bytes
+
+Example:
+
+```go
+fmt.Println(len("hello"))
+```
+
+Output:
+
+```text
+5
+```
+
+because:
+
+```text
+5 bytes
+```
+
+---
+
+Example:
+
+```go
+fmt.Println(len("🚀"))
+```
+
+Output:
+
+```text
+4
+```
+
+because:
+
+```text
+4 bytes
+```
+
+---
+
+# What Is a Rune?
+
+Go represents a Unicode character using:
+
+```go
+rune
+```
+
+A rune represents:
+
+```text
+One Unicode code point
+```
+
+Think:
+
+```text
+One character
+```
+
+---
+
+Example:
+
+```go
+s := "🚀"
+
+fmt.Println(len(s))
+```
+
+Output:
+
+```text
+4
+```
+
+because:
+
+```text
+4 bytes
+```
+
+---
+
+But:
+
+```go
+fmt.Println(len([]rune(s)))
+```
+
+Output:
+
+```text
+1
+```
+
+because:
+
+```text
+1 character
+```
+
+---
+
+Another Example
+
+```go
+s := "नमस्ते"
+
+fmt.Println(len(s))
+```
+
+might output:
+
+```text
+18
+```
+
+because UTF-8 uses multiple bytes per character.
+
+But:
+
+```go
+fmt.Println(len([]rune(s)))
+```
+
+might output:
+
+```text
+6
+```
+
+because there are six characters.
+
+---
+
+# Why Does scanner.Bytes() Work For Offsets?
+
+Our index builder uses:
+
+```go
+offset += int64(len(scanner.Bytes()) + 1)
+```
+
+At first glance this seems odd.
+
+Why not count characters?
+
+Because:
+
+> File offsets are measured in bytes.
+
+Not characters.
+
+---
+
+Suppose we have:
+
+```text
+name,🚀
+```
+
+The filesystem stores:
+
+```text
+n
+a
+m
+e
+,
+🚀
+\n
+```
+
+as bytes.
+
+The rocket occupies:
+
+```text
+4 bytes
+```
+
+on disk.
+
+Therefore:
+
+```go
+len(scanner.Bytes())
+```
+
+correctly measures:
+
+```text
+How many bytes this record occupies in the file
+```
+
+which is exactly what an offset represents.
+
+---
+
+# Storage Engine Insight
+
+Humans think in:
+
+```text
+Characters
+Words
+Strings
+```
+
+Computers think in:
+
+```text
+Bytes
+Memory Addresses
+Offsets
+```
+
+The filesystem does not know what a character is.
+
+The filesystem only sees:
+
+```text
+01001010
+01100101
+01101100
+...
+```
+
+(raw bytes)
+
+---
+
+# Why We Use len(scanner.Bytes())
+
+We are calculating:
+
+```text
+Record size on disk
+```
+
+not:
+
+```text
+Number of visible characters
+```
+
+Therefore:
+
+```go
+offset += int64(len(scanner.Bytes()) + 1)
+```
+
+is correct.
+
+Even for:
+
+```text
+hello
+नमस्ते
+🚀🚀🚀
+```
+
+because offsets are measured in bytes.
+
+---
+
+# Final Takeaway
+
+For storage engines:
+
+```go
+len(string)
+```
+
+means:
+
+```text
+Number of bytes
+```
+
+not:
+
+```text
+Number of characters
+```
+
+And that is exactly what we want because:
+
+> A file offset is the number of bytes from the beginning of the file.
+

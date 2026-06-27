@@ -1,13 +1,15 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"learn_db/internal/engine"
 	"learn_db/internal/engine/logengine"
-	"os"
+	"learn_db/internal/index"
+	"learn_db/internal/index/offset"
 )
 
-type CommandHanlder func(
+type CommandHandler func(
 	db engine.Engine,
 	args []string,
 ) (string, error)
@@ -49,33 +51,65 @@ func GetCommand(
 	return db.GetKey(args[0])
 }
 
-func RunCommand(db engine.Engine) (string, error) {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage:")
-		fmt.Println("./learn_db set <key> <value>")
-		fmt.Println("./learn_db get <key>")
+func RunCommand(
+	db engine.Engine,
+	args []string,
+) (string, error) {
+
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage:\nset <key> <value>\nget <key>")
 	}
 
-	command := os.Args[1]
+	command := args[0]
 
-	handlers := map[string]CommandHanlder{
+	handlers := map[string]CommandHandler{
 		"set": SetCommand,
 		"get": GetCommand,
 	}
 
 	handler, exists := handlers[command]
 	if !exists {
-		return "", fmt.Errorf("Unknown Command %s", command)
+		return "", fmt.Errorf("unknown command %s", command)
 	}
 
-	return handler(db, os.Args[2:])
+	return handler(db, args[1:])
 }
 
 func main() {
-	db := logengine.CreateDatabase(logengine.FILEPATH)
-	result, err := RunCommand(db)
-	if err != nil {
-		fmt.Printf("Failure\n: %v", err)
+	dbType := flag.String("db", "log", "Database engine (log, lsm, memory)")
+	indexType := flag.String("index", "", "Index implementation (offset, btree, art)")
+	timer := flag.Bool("timer", false, "Measure execution time")
+
+	flag.Parse()
+
+	var idx index.Index
+	switch *indexType {
+	case "": // No index required
+	case "offset":
+		idx = offset.CreateOffsetIndex()
+	default:
+		fmt.Printf("Unknown index: %s\n", *indexType)
+		return
 	}
-	fmt.Printf("Result: %v", result)
+
+	var db engine.Engine
+	switch *dbType {
+	case "log":
+		db = logengine.CreateDatabase(
+			logengine.FILEPATH,
+			idx,
+		)
+	default:
+		fmt.Printf("Unknown database engine: %s\n", *dbType)
+		return
+	}
+
+	// db := logengine.CreateDatabase(logengine.FILEPATH)
+	// // build the database index
+	// db.BuildIndex()
+	// result, err := RunCommand(db)
+	// if err != nil {
+	// 	fmt.Printf("Failure\n: %v", err)
+	// }
+	// fmt.Printf("Result: %v", result)
 }
