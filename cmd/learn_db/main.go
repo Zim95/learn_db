@@ -78,13 +78,14 @@ func RunCommand(
 func main() {
 	dbType := flag.String("db", "log", "Database engine (log, lsm, memory)")
 	indexType := flag.String("index", "", "Index implementation (offset, btree, art)")
-	timer := flag.Bool("timer", false, "Measure execution time")
+	// timer := flag.Bool("timer", false, "Measure execution time")
 
 	flag.Parse()
 
 	var idx index.Index
 	switch *indexType {
-	case "": // No index required
+	case "":
+		idx = nil
 	case "offset":
 		idx = offset.CreateOffsetIndex()
 	default:
@@ -104,12 +105,12 @@ func main() {
 		return
 	}
 
-	// db := logengine.CreateDatabase(logengine.FILEPATH)
-	// // build the database index
-	// db.BuildIndex()
-	// result, err := RunCommand(db)
-	// if err != nil {
-	// 	fmt.Printf("Failure\n: %v", err)
-	// }
-	// fmt.Printf("Result: %v", result)
+	if idx != nil {
+		db.BuildIndex()
+	}
+	result, err := RunCommand(db, flag.Args())
+	if err != nil {
+		fmt.Printf("Failure\n: %v", err)
+	}
+	fmt.Printf("Result: %v", result)
 }
