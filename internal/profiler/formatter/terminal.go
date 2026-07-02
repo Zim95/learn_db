@@ -32,11 +32,11 @@ func Terminal(w io.Writer, results []profiler.Result) {
 		case profiler.MemoryResult:
 			fmt.Fprintf(
 				w,
-				"%-8s mem    alloc=%dB objects=%d heap-delta=%dB\n",
+				"%-8s mem    alloc=%dKB objects=%d heap-delta=%dKB\n",
 				r.Operation(),
-				r.TotalAlloc,
-				r.Mallocs,
-				r.HeapAllocDelta,
+				r.TotalAlloc/1024,
+				r.Mallocs/1024,
+				r.HeapAllocDelta/1024,
 			)
 
 		case profiler.CPUResult:

@@ -55,6 +55,7 @@ func GetCommand(
 }
 
 func RunCommand(
+	prof *profiler.Profiler,
 	db engine.Engine,
 	args []string,
 ) (string, error) {
@@ -64,6 +65,10 @@ func RunCommand(
 	}
 
 	command := args[0]
+	if err := prof.Start(command); err != nil {
+		fmt.Printf("Failed to start profiler: %v\n", err)
+		return "", err
+	}
 
 	handlers := map[string]CommandHandler{
 		"set": SetCommand,
@@ -75,7 +80,9 @@ func RunCommand(
 		return "", fmt.Errorf("unknown command %s", command)
 	}
 
-	return handler(db, args[1:])
+	res, err := handler(db, args[1:])
+	prof.Stop(command)
+	return res, err
 }
 
 func main() {
@@ -123,17 +130,12 @@ func main() {
 		db.BuildIndex()
 	}
 
-	if err := prof.Start("command"); err != nil {
-		fmt.Printf("Failed to start profiler: %v\n", err)
-		return
-	}
-	result, err := RunCommand(db, flag.Args())
-	prof.Stop("command")
+	result, err := RunCommand(prof, db, flag.Args())
 
 	if err != nil {
 		fmt.Printf("Failure\n: %v", err)
 	}
-	fmt.Printf("Result: %v", result)
+	fmt.Printf("Result: %v\n", result)
 
 	if prof.Enabled() {
 		// Profiling output goes to stderr so it stays separate from the

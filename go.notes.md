@@ -2968,6 +2968,9 @@ And that is exactly what we want because:
 	- GC runs later and then `HeapAlloc = 0`.
 - HeapAlloc Usage:
 	- We can use this to measure memory usage.
-	- If our previous version used `8MB` but now uses `5MB`, thats an improvement in memory usage.
+	- If our previous version used `8MB` but now uses `5MB`, thats an improvement in memory usage by `3MB`. `3MB` is what is shown in the graph.
+	- Another example, lets say We used, `20MB`, but now use `15MB`.
+
+# CPU Profiling
 
 
