@@ -2937,3 +2937,37 @@ And that is exactly what we want because:
 
 > A file offset is the number of bytes from the beginning of the file.
 
+# Memory Profiling
+
+- TotalAlloc:
+	- Think of it as a speedometer on a bike. It keeps going.
+	- Let's say we do `a:=make([]byte, 100)`, `TotalAlloc=100`.
+	- Then we do `b:=make([]byte, 200)`, `TotalAlloc=200 + prev 100 = 300`.
+	- Then lets say GC cleans up data.  `TotalAlloc is still 300`.
+	- It measures all the bytes that have ever been allocated.
+- TotalAlloc Usage:
+	- Suppose we have a code change, we used to allocate `8kb` before and now we allocate `80kb`.
+	- This means our older version created much less garbage.
+	- This means:
+		- Fewer GC Cycles, less CPU cleaning memory, better throughput
+
+- Mallocs:
+	- The number of objects allocated in the heap.
+	- Let's say we do `a:=make([]byte, 10)`, `Mallocs += 1`.
+	- Then again we do `b:=make([]byte, 2000)`, `Mallocs += 1, still 1`.
+	- It does not care about bytes, it cares about the number of objects in heap.
+- Malloc Usage:
+	- Suppose our program creates 1000 tiny strings vs 1 large buffer.
+	- The version which produces 1000 tiny strings has 1000 Mallocs.
+	- This means, We have more pointers, more graph traversal for GC, more bookkeeping.
+	- Basically, an indicator to how much work am I creating for the GC.
+
+- HeapAlloc:
+	- How much live memory exists right now.
+	- Let's say we do `make([]byte, 100 MB)`, `HeapAlloc = 100MB`.
+	- GC runs later and then `HeapAlloc = 0`.
+- HeapAlloc Usage:
+	- We can use this to measure memory usage.
+	- If our previous version used `8MB` but now uses `5MB`, thats an improvement in memory usage.
+
+
